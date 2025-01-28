@@ -19,6 +19,7 @@
 </head>
 <body>
   <script type="module">
+   alert('started');
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
     import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
@@ -51,6 +52,7 @@
         environment = gltf.scene;
         environment.visible = false; // Hide initially
         scene.add(environment);
+        alert('model loaded');
       });
     }
     loadEnvironment();
