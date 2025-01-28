@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script type="module" src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/loaders/GLTFLoader.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/webxr/ARButton.js"></script>
+  <title>AR Portal with Anchors</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+    import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
+
+    // Scene, Camera, Renderer
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(ARButton.createButton(renderer));
+
+    let portal = null;
+    let anchor = null; // XRAnchor to fix the portal
+    const portalGeometry = new THREE.RingGeometry(1, 1.5, 32);
+    const portalMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x00ffff, 
+      side: THREE.DoubleSide, 
+      transparent: true, 
+      opacity: 0.5 
+    });
+
+    // Load Surrounding Environment GLB
+    const loader = new GLTFLoader();
+    let environment = null;
+
+    function loadEnvironment() {
+      loader.load('path-to-surrounding-environment.glb', (gltf) => {
+        environment = gltf.scene;
+        environment.visible = false; // Hide initially
+        scene.add(environment);
+      });
+    }
+    loadEnvironment();
+
+    // Handle Tap to Place Portal
+    renderer.xr.addEventListener('sessionstart', () => {
+      const session = renderer.xr.getSession();
+      session.addEventListener('select', (event) => {
+        // Perform a hit test to find the surface
+        const viewerSpace = session.requestReferenceSpace('viewer');
+        const hitTestSource = session.requestHitTestSource({ space: viewerSpace });
+
+        hitTestSource.then((source) => {
+          session.requestAnimationFrame((timestamp, frame) => {
+            const hitTestResults = frame.getHitTestResults(source);
+
+            if (hitTestResults.length > 0) {
+              const hit = hitTestResults[0];
+              const referenceSpace = renderer.xr.getReferenceSpace();
+              const pose = hit.getPose(referenceSpace);
+
+              // Place the portal at the hit location
+              if (!portal) {
+                portal = new THREE.Mesh(portalGeometry, portalMaterial);
+                portal.rotation.x = -Math.PI / 2; // Make it face upwards
+                scene.add(portal);
+              }
+
+              portal.position.set(
+                pose.transform.position.x,
+                pose.transform.position.y,
+                pose.transform.position.z
+              );
+
+              // Create an anchor to keep it fixed
+              if (session.requestAnchor) {
+                session.requestAnchor(pose.transform, referenceSpace).then((newAnchor) => {
+                  anchor = newAnchor;
+                  console.log('Portal anchored to the surface.');
+                });
+              }
+            }
+          });
+        });
+      });
+    });
+
+    // Detect Camera Passing Through Portal
+    function isCameraThroughPortal() {
+      if (portal) {
+        const portalPosition = new THREE.Vector3().setFromMatrixPosition(portal.matrixWorld);
+        const distance = camera.position.distanceTo(portalPosition);
+
+        // Check if the camera is close enough to the portal
+        if (distance < 1.5) {
+          console.log('Camera passed through the portal!');
+          triggerPortalEffect();
+        }
+      }
+    }
+
+    // Trigger Portal Effect
+    function triggerPortalEffect() {
+      if (environment) {
+        environment.visible = true;
+        environment.position.copy(portal.position); // Surround portal with environment
+      }
+    }
+
+    // Animation Loop
+    function animate() {
+      renderer.setAnimationLoop(() => {
+        isCameraThroughPortal();
+        renderer.render(scene, camera);
+      });
+    }
+
+    animate();
+  </script>
+</body>
+</html>
