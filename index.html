@@ -1,136 +1,196 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script type="module" src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js"></script>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/loaders/GLTFLoader.js"></script>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/webxr/ARButton.js"></script>
-  <title>AR Portal with Anchors</title>
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-    }
-    canvas {
-      display: block;
-    }
-  </style>
+    <title>AR Portal Trigger</title>
+    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    <style>
+        model-viewer {
+            width: 100%;
+            height: 100vh;
+            background: #000;
+        }
+        #ar-button {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            background: #fff;
+            border: none;
+            border-radius: 30px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #trigger-status {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-family: Arial, sans-serif;
+            display: none;
+        }
+    </style>
 </head>
 <body>
-  <script type="module">
-   alert('started');
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-    import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
+    <model-viewer 
+        src="fantacy-portal.glb"
+        ar
+        ar-modes="webxr scene-viewer quick-look"
+        camera-controls
+        environment-image="neutral"
+        shadow-intensity="1"
+        exposure="1.0"
+        auto-rotate
+        rotation-per-second="30deg">
+        
+        <button id="ar-button" slot="ar-button">
+            Activate AR Portal
+        </button>
+        <div id="trigger-status">Portal Ready</div>
+    </model-viewer>
 
-    // Scene, Camera, Renderer
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
-    document.body.appendChild(renderer.domElement);
-    document.body.appendChild(ARButton.createButton(renderer));
+    <script>
+        const modelViewer = document.querySelector('model-viewer');
+        const statusElement = document.getElementById('trigger-status');
+        const portalConfig = {
+            width: 1.0,    // Match your portal model width in meters
+            height: 2.0,   // Match your portal model height in meters
+            depth: 0.1,    // Portal thickness
+            triggerDistance: 0.5 // Activation threshold in meters
+        };
 
-    let portal = null;
-    let anchor = null; // XRAnchor to fix the portal
-    const portalGeometry = new THREE.RingGeometry(1, 1.5, 32);
-    const portalMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0x00ffff, 
-      side: THREE.DoubleSide, 
-      transparent: true, 
-      opacity: 0.5 
-    });
+        let xrSession = null;
+        let portalTransform = null;
+        let portalNormal = null;
+        let previousPosition = null;
+        let isTriggered = false;
 
-    // Load Surrounding Environment GLB
-    const loader = new GLTFLoader();
-    let environment = null;
-
-    function loadEnvironment() {
-      loader.load('path-to-surrounding-environment.glb', (gltf) => {
-        environment = gltf.scene;
-        environment.visible = false; // Hide initially
-        scene.add(environment);
-        alert('model loaded');
-      });
-    }
-    loadEnvironment();
-
-    // Handle Tap to Place Portal
-    renderer.xr.addEventListener('sessionstart', () => {
-      const session = renderer.xr.getSession();
-      session.addEventListener('select', (event) => {
-        // Perform a hit test to find the surface
-        const viewerSpace = session.requestReferenceSpace('viewer');
-        const hitTestSource = session.requestHitTestSource({ space: viewerSpace });
-
-        hitTestSource.then((source) => {
-          session.requestAnimationFrame((timestamp, frame) => {
-            const hitTestResults = frame.getHitTestResults(source);
-
-            if (hitTestResults.length > 0) {
-              const hit = hitTestResults[0];
-              const referenceSpace = renderer.xr.getReferenceSpace();
-              const pose = hit.getPose(referenceSpace);
-
-              // Place the portal at the hit location
-              if (!portal) {
-                portal = new THREE.Mesh(portalGeometry, portalMaterial);
-                portal.rotation.x = -Math.PI / 2; // Make it face upwards
-                scene.add(portal);
-              }
-
-              portal.position.set(
-                pose.transform.position.x,
-                pose.transform.position.y,
-                pose.transform.position.z
-              );
-
-              // Create an anchor to keep it fixed
-              if (session.requestAnchor) {
-                session.requestAnchor(pose.transform, referenceSpace).then((newAnchor) => {
-                  anchor = newAnchor;
-                  console.log('Portal anchored to the surface.');
-                });
-              }
+        modelViewer.addEventListener('ar-status', (event) => {
+            if (event.detail.status === 'session-started') {
+                xrSession = modelViewer.xrSession;
+                statusElement.style.display = 'block';
+                setupXR();
             }
-          });
         });
-      });
-    });
 
-    // Detect Camera Passing Through Portal
-    function isCameraThroughPortal() {
-      if (portal) {
-        const portalPosition = new THREE.Vector3().setFromMatrixPosition(portal.matrixWorld);
-        const distance = camera.position.distanceTo(portalPosition);
+        modelViewer.addEventListener('ar-place', (event) => {
+            portalTransform = {
+                position: event.detail.position,
+                rotation: event.detail.rotation
+            };
+            portalNormal = rotateVector([0, 0, -1], portalTransform.rotation);
+            console.log('Portal placed:', portalTransform);
+        });
 
-        // Check if the camera is close enough to the portal
-        if (distance < 1.5) {
-          console.log('Camera passed through the portal!');
-          triggerPortalEffect();
+        async function setupXR() {
+            const refSpace = await xrSession.requestReferenceSpace('viewer');
+            xrSession.requestAnimationFrame(onXRFrame);
         }
-      }
-    }
 
-    // Trigger Portal Effect
-    function triggerPortalEffect() {
-      if (environment) {
-        environment.visible = true;
-        environment.position.copy(portal.position); // Surround portal with environment
-      }
-    }
+        function onXRFrame(time, frame) {
+            if (!portalTransform) {
+                frame.session.requestAnimationFrame(onXRFrame);
+                return;
+            }
 
-    // Animation Loop
-    function animate() {
-      renderer.setAnimationLoop(() => {
-        isCameraThroughPortal();
-        renderer.render(scene, camera);
-      });
-    }
+            const pose = frame.getViewerPose(frame.session.requestReferenceSpace('viewer'));
+            if (pose) {
+                const cameraPosition = pose.transform.position;
+                checkPortalCrossing(cameraPosition);
+            }
+            frame.session.requestAnimationFrame(onXRFrame);
+        }
 
-    animate();
-  </script>
+        function checkPortalCrossing(cameraPosition) {
+            const cameraVector = [
+                cameraPosition.x - portalTransform.position.x,
+                cameraPosition.y - portalTransform.position.y,
+                cameraPosition.z - portalTransform.position.z
+            ];
+
+            const distance = dotProduct(cameraVector, portalNormal);
+            const isInFront = distance > -portalConfig.triggerDistance;
+            const isBehind = distance < portalConfig.triggerDistance;
+            
+            if (previousPosition !== null) {
+                const movedThrough = (previousPosition > 0 && distance < 0) || 
+                                   (previousPosition < 0 && distance > 0);
+                
+                if (movedThrough && isWithinPortalBounds(cameraVector)) {
+                    triggerPortalEvent();
+                }
+            }
+            
+            previousPosition = distance;
+        }
+
+        function isWithinPortalBounds(cameraVector) {
+            const tangent = crossProduct(portalNormal, [0, 1, 0]);
+            const binormal = crossProduct(portalNormal, tangent);
+            
+            const x = dotProduct(cameraVector, tangent);
+            const y = dotProduct(cameraVector, [0, 1, 0]);
+            
+            return Math.abs(x) <= portalConfig.width/2 && 
+                   Math.abs(y) <= portalConfig.height/2;
+        }
+
+        function triggerPortalEvent() {
+            if (!isTriggered) {
+                isTriggered = true;
+                statusElement.textContent = "Portal Activated!";
+                statusElement.style.backgroundColor = "#4CAF50";
+                
+                // Add your portal activation logic here
+                console.log("Portal triggered!");
+                
+                setTimeout(() => {
+                    isTriggered = false;
+                    statusElement.textContent = "Portal Ready";
+                    statusElement.style.backgroundColor = "rgba(0,0,0,0.7)";
+                }, 3000);
+            }
+        }
+
+        // Vector math utilities
+        function dotProduct(a, b) {
+            return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+        }
+
+        function crossProduct(a, b) {
+            return [
+                a[1]*b[2] - a[2]*b[1],
+                a[2]*b[0] - a[0]*b[2],
+                a[0]*b[1] - a[1]*b[0]
+            ];
+        }
+
+        function rotateVector(v, q) {
+            const [x, y, z, w] = [q.x, q.y, q.z, q.w];
+            const [vx, vy, vz] = v;
+            
+            const qvec = [x, y, z];
+            const uv = crossProduct(qvec, v);
+            const uuv = crossProduct(qvec, uv);
+            
+            uv[0] *= 2*w;
+            uv[1] *= 2*w;
+            uv[2] *= 2*w;
+            
+            uuv[0] *= 2;
+            uuv[1] *= 2;
+            uuv[2] *= 2;
+            
+            return [
+                vx + uv[0] + uuv[0],
+                vy + uv[1] + uuv[1],
+                vz + uv[2] + uuv[2]
+            ];
+        }
+    </script>
 </body>
 </html>
